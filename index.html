@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FIT Swim Editor</title>
+<style>
+  :root { --bg:#f7f7f5; --fg:#1d1d1b; --muted:#6b6b66; --card:#fff; --line:#e3e3de; --accent:#1a6fd1; --warn:#fff3cd; --warnline:#e0b400; --rest:#f0f0ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1b1b1a; --fg:#ececea; --muted:#a0a09a; --card:#252524; --line:#3a3a38; --accent:#5aa2ff; --warn:#4a3d10; --warnline:#c9a227; --rest:#2d2d2b; } }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+  main { max-width:960px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.lead { color:var(--muted); margin:0 0 16px; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:16px; position:sticky; top:0; z-index:1; }
+  .bar .total { margin-left:auto; font-weight:600; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
+  input[type=number] { width:64px; font:inherit; padding:3px 6px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
+  .lap { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+  .lap.rest { background:var(--rest); color:var(--muted); padding:6px 12px; font-size:13px; }
+  .lap header { display:flex; flex-wrap:wrap; gap:12px; padding:8px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .lap header b { min-width:60px; }
+  .lap header .dist { font-weight:600; }
+  .lap header .changed { color:var(--accent); }
+  .lap.closed table { display:none; }
+  .lap.closed header { border-bottom:0; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { padding:4px 8px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  td.act { text-align:left; }
+  td.act button { padding:2px 8px; font-size:12px; }
+  tr.sus td { background:var(--warn); }
+  tr.sus td:first-child { box-shadow:inset 3px 0 var(--warnline); }
+  tr.pause td { color:var(--muted); }
+  .scroll { overflow-x:auto; }
+  .hint { color:var(--muted); font-size:12px; margin-top:16px; }
+  #err { color:#c0392b; }
+  .muted { color:var(--muted); }
+  #src { margin:-8px 0 12px; font-size:13px; }
+  td.sug { white-space:normal; min-width:160px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FIT Swim Editor</h1>
+  <p class="lead">Bahnen einer Schwimmaktivität im Becken korrigieren. Alles läuft lokal im Browser, die Datei verlässt den Rechner nicht.</p>
+
+  <div class="bar">
+    <input type="file" id="file" accept=".fit,.gz,.FIT">
+    <label>Becken <input type="number" id="pool" min="10" max="100" step="0.5" value="25"> m</label>
+    <button id="undo" disabled title="Ctrl+Z">↶ Rückgängig</button>
+    <button id="reset" disabled>Zurücksetzen</button>
+    <button id="all" disabled>Alle Vorschläge übernehmen</button>
+    <button id="save" class="primary" disabled>Korrigierte FIT speichern</button>
+    <span class="total" id="total"></span>
+  </div>
+  <div id="src" class="muted"></div>
+  <div id="err"></div>
+  <div id="laps"></div>
+
+  <p class="hint">
+    Gelb markiert: Bahnen, die deutlich länger (vermutlich mehrere Bahnen) oder deutlich kürzer (vermutlich Phantom-Bahn) sind als der Median.
+    In der Spalte «Vorschlag» steht, wie sich die Bahn korrigieren lässt. Manuell: «Teilen» macht aus einer Bahn zwei, «+ nächste» legt sie mit der folgenden zusammen.
+    Runden- und Sessiondistanz, Anzahl Bahnen, Züge und Pace werden beim Speichern neu berechnet. Zeiten, Herzfrequenz und alle übrigen Daten bleiben unverändert.
+    Ablauf: Originaldatei (.fit) aus der Trainingsplattform herunterladen, hier korrigieren und speichern, danach wieder hochladen. Bei TrainingPeaks zuerst die Originaldatei löschen und erst dann die korrigierte hochladen (sonst werden beide zusammengeführt).
+  </p>
+</main>
+
+<script id="core">
+// ---------- FIT-Kern (ohne DOM) ----------
+const MSG = { SESSION: 18, LAP: 19, LENGTH: 101 };
+const F = {
+  ts: 253, idx: 254,
+  len: { start: 2, elapsed: 3, timer: 4, strokes: 5, speed: 6, stroke: 7, cadence: 9, type: 12 },
+  lap: { dist: 9, cycles: 10, speed: 13, numLen: 32, firstLen: 35, numActive: 40, eSpeed: 110 },
+  ses: { dist: 9, cycles: 10, speed: 14, numLen: 33, pool: 44, numActive: 47, eSpeed: 124 },
+};
+
+const CRC_T = [0x0000,0xCC01,0xD801,0x1400,0xF001,0x3C00,0x2800,0xE401,0xA001,0x6C00,0x7800,0xB401,0x5000,0x9C01,0x8801,0x4400];
+function crc16(bytes, crc = 0) {
+  for (const b of bytes) {
+    let t = CRC_T[crc & 0xF]; crc = (crc >> 4) & 0x0FFF; crc ^= t ^ CRC_T[b & 0xF];
+    t = CRC_T[crc & 0xF]; crc = (crc >> 4) & 0x0FFF; crc ^= t ^ CRC_T[(b >> 4) & 0xF];
+  }
+  return crc;
+}
+
+function parseFit(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const hs = u8[0];
+  if (String.fromCharCode(...u8.slice(8, 12)) !== '.FIT') throw new Error('Keine gültige FIT-Datei.');
+  const end = hs + dv.getUint32(4, true);
+  const defs = {}, recs = [];
+  let p = hs;
+  while (p < end) {
+    const start = p, h = u8[p++];
+    if (!(h & 0x80) && (h & 0x40)) {
+      const le = u8[p + 1] === 0, gnum = dv.getUint16(p + 2, le), n = u8[p + 4];
+      p += 5;
+      const fields = []; let off = 1;
+      for (let i = 0; i < n; i++, p += 3) { fields.push({ num: u8[p], size: u8[p + 1], base: u8[p + 2] & 0x1F, off }); off += u8[p + 1]; }
+      let dev = 0;
+      if (h & 0x20) { const nd = u8[p++]; for (let i = 0; i < nd; i++, p += 3) dev += u8[p + 1]; }
+      defs[h & 0x0F] = { le, gnum, fields, size: off - 1 + dev };
+      recs.push({ def: null, bytes: u8.slice(start, p) });
+    } else {
+      const def = defs[h & 0x80 ? (h >> 5) & 3 : h & 0x0F];
+      if (!def) throw new Error('Datensatz ohne Definition bei Byte ' + start);
+      p += def.size;
+      recs.push({ def, bytes: u8.slice(start, p) });
+    }
+  }
+  return { header: u8.slice(0, hs), recs };
+}
+
+const SIZES = { 0:1, 1:1, 2:1, 3:2, 4:2, 5:4, 6:4, 10:1, 11:2, 12:4, 13:1 };
+function getF(rec, num) {
+  const f = rec.def.fields.find(x => x.num === num);
+  if (!f || SIZES[f.base] !== f.size) return null;
+  const dv = new DataView(rec.bytes.buffer, rec.bytes.byteOffset), le = rec.def.le;
+  let v;
+  switch (f.size) {
+    case 1: v = f.base === 1 ? dv.getInt8(f.off) : dv.getUint8(f.off); break;
+    case 2: v = f.base === 3 ? dv.getInt16(f.off, le) : dv.getUint16(f.off, le); break;
+    case 4: v = f.base === 5 ? dv.getInt32(f.off, le) : dv.getUint32(f.off, le); break;
+  }
+  const invalid = { 1: [0xFF, 0x7F], 2: [0xFFFF, 0x7FFF], 4: [0xFFFFFFFF, 0x7FFFFFFF] }[f.size];
+  return invalid.includes(v) ? null : v;
+}
+function setF(rec, num, v) {
+  const f = rec.def.fields.find(x => x.num === num);
+  if (!f || SIZES[f.base] !== f.size) return false;
+  const dv = new DataView(rec.bytes.buffer, rec.bytes.byteOffset), le = rec.def.le;
+  v = Math.max(0, Math.round(v));
+  if (f.size === 1) dv.setUint8(f.off, Math.min(v, 0xFE));
+  else if (f.size === 2) dv.setUint16(f.off, Math.min(v, 0xFFFE), le);
+  else dv.setUint32(f.off, Math.min(v, 0xFFFFFFFE), le);
+  return true;
+}
+
+// Modell: Bahnen mit Bezug auf ihren Original-Datensatz (anchor) und ihre Runde
+function buildModel(fit) {
+  const recs = fit.recs, of = g => recs.filter(r => r.def && r.def.gnum === g);
+  const lenRecs = of(MSG.LENGTH), laps = of(MSG.LAP), session = of(MSG.SESSION)[0];
+  if (!lenRecs.length) throw new Error('Keine Bahnen gefunden. Ist das eine Beckenschwimm-Aktivität?');
+  const byIdx = new Map(lenRecs.map((r, i) => [getF(r, F.idx) ?? i, r]));
+  const lapOf = new Map(), lapFirst = [];
+  laps.forEach((lap, li) => {
+    lapFirst.push(getF(lap, F.lap.firstLen) ?? 0);
+    const first = getF(lap, F.lap.firstLen), n = getF(lap, F.lap.numLen) || 0;
+    for (let i = 0; i < n; i++) { const r = byIdx.get(first + i); if (r) lapOf.set(r, li); }
+  });
+  const lengths = lenRecs.map((r, i) => ({
+    anchor: recs.indexOf(r),
+    orig: getF(r, F.idx) ?? i,
+    end: getF(r, F.ts),
+    edited: false,
+    lap: lapOf.get(r) ?? -1,
+    start: getF(r, F.len.start),
+    elapsed: (getF(r, F.len.elapsed) ?? 0) / 1000,
+    timer: (getF(r, F.len.timer) ?? 0) / 1000,
+    strokes: getF(r, F.len.strokes) ?? 0,
+    stroke: getF(r, F.len.stroke),
+    active: getF(r, F.len.type) === 1,
+  }));
+  const pool = session && getF(session, F.ses.pool) ? getF(session, F.ses.pool) / 100 : 25;
+  return { lengths, lapCount: laps.length, lapFirst, pool, poolOrig: pool };
+}
+
+function splitLength(lengths, i, n = 2) {
+  const a = lengths[i], parts = [];
+  for (let k = 0; k < n; k++) {
+    const s = a.start + Math.round(a.elapsed * k / n), e = k === n - 1 ? a.end : a.start + Math.round(a.elapsed * (k + 1) / n);
+    const strokes = Math.floor(a.strokes * (k + 1) / n) - Math.floor(a.strokes * k / n);
+    parts.push({ ...a, elapsed: a.elapsed / n, timer: a.timer / n, strokes, start: s, end: e, edited: true });
+  }
+  return [...lengths.slice(0, i), ...parts, ...lengths.slice(i + 1)];
+}
+function mergeWithNext(lengths, i) {
+  const a = lengths[i], b = lengths[i + 1];
+  if (!b || a.lap !== b.lap) return lengths;
+  const m = { ...a, elapsed: a.elapsed + b.elapsed, timer: a.timer + b.timer, strokes: a.strokes + b.strokes, end: b.end, edited: true };
+  return [...lengths.slice(0, i), m, ...lengths.slice(i + 2)];
+}
+function deleteLength(lengths, i) { return lengths.filter((_, k) => k !== i); }
+
+// Vorschläge: zu lange Bahnen teilen, Phantom-Bahnen mit dem passenderen Nachbarn zusammenlegen
+const median = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
+function suggestions(lengths) {
+  const act = lengths.filter(l => l.active);
+  const medT = median(act.map(l => l.timer)), medS = median(act.map(l => l.strokes));
+  const out = new Map();
+  if (!medT) return out;
+  lengths.forEach((l, i) => {
+    if (!l.active) return;
+    const n = Math.round(l.timer / medT);
+    if (n >= 2 && l.timer > medT * 1.6) {
+      out.set(i, { text: `in ${n} Bahnen teilen`, apply: ls => splitLength(ls, i, n) });
+      return;
+    }
+    if (medS && l.strokes < medS * 0.5 && l.timer < medT * 0.8) {
+      // nur zusammenlegen, wenn das Ergebnis eine normale Bahn ergibt (sonst würde es wieder geteilt)
+      const cand = [i - 1, i + 1].filter(k => lengths[k] && lengths[k].active && lengths[k].lap === l.lap
+          && lengths[k].timer + l.timer <= medT * 1.4)
+        .sort((a, b) => Math.abs(lengths[a].timer + l.timer - medT) - Math.abs(lengths[b].timer + l.timer - medT));
+      if (cand.length) {
+        const k = cand[0];
+        out.set(i, { text: k < i ? 'mit vorheriger zusammenlegen' : 'mit nächster zusammenlegen',
+                     apply: ls => mergeWithNext(ls, Math.min(i, k)) });
+      } else out.set(i, { text: 'löschen (Phantom-Bahn)', apply: ls => deleteLength(ls, i) });
+    }
+  });
+  return out;
+}
+function applyAllSuggestions(lengths) {
+  for (let guard = 0; guard < 200; guard++) {
+    const s = suggestions(lengths);
+    if (!s.size) break;
+    const [i] = [...s.keys()].slice(-1);  // von hinten, damit Indizes stabil bleiben
+    lengths = s.get(i).apply(lengths);
+  }
+  return lengths;
+}
+
+function lapSummary(model, lengths) {
+  return Array.from({ length: model.lapCount }, (_, li) => {
+    const ls = lengths.filter(l => l.lap === li), act = ls.filter(l => l.active);
+    return { n: ls.length, active: act.length, dist: act.length * model.pool,
+             timer: act.reduce((s, l) => s + l.timer, 0), strokes: act.reduce((s, l) => s + l.strokes, 0) };
+  });
+}
+
+function writeFit(fit, model, lengths, pool) {
+  model = { ...model, pool };
+  const recs = fit.recs.map(r => ({ def: r.def, bytes: r.bytes.slice() }));
+  // Bahnen neu erzeugen, jeweils an der Stelle ihres Original-Datensatzes
+  const byAnchor = new Map();
+  lengths.forEach((l, i) => { if (!byAnchor.has(l.anchor)) byAnchor.set(l.anchor, []); byAnchor.get(l.anchor).push([l, i]); });
+  const out = [];
+  recs.forEach((r, ri) => {
+    if (!(r.def && r.def.gnum === MSG.LENGTH)) { out.push(r); return; }
+    for (const [l, i] of byAnchor.get(ri) || []) {
+      const n = { def: r.def, bytes: r.bytes.slice() };
+      setF(n, F.idx, i);
+      if (!l.edited && pool === model.poolOrig) { out.push(n); continue; }
+      if (l.start != null) setF(n, F.len.start, l.start);
+      if (l.end != null) setF(n, F.ts, l.end);
+      setF(n, F.len.elapsed, l.elapsed * 1000);
+      setF(n, F.len.timer, l.timer * 1000);
+      if (l.active) {
+        setF(n, F.len.strokes, l.strokes);
+        if (l.timer > 0) { setF(n, F.len.speed, pool / l.timer * 1000); setF(n, F.len.cadence, l.strokes * 60 / l.timer); }
+      }
+      out.push(n);
+    }
+  });
+  // Runden und Session nachführen
+  const sums = lapSummary(model, lengths), before = lapSummary(model, model.lengths);
+  const same = (x, y) => x.n === y.n && x.active === y.active && x.strokes === y.strokes && Math.abs(x.timer - y.timer) < 1e-6;
+  const newFirst = old => { const k = lengths.findIndex(l => l.orig >= old); return k < 0 ? lengths.length : k; };
+  const poolChanged = pool !== model.poolOrig;
+  let li = 0;
+  for (const r of out) {
+    if (!r.def) continue;
+    if (r.def.gnum === MSG.LAP) {
+      const s = sums[li];
+      setF(r, F.lap.firstLen, newFirst(model.lapFirst[li]));
+      if (same(s, before[li]) && !poolChanged) { li++; continue; }
+      setF(r, F.lap.numLen, s.n); setF(r, F.lap.numActive, s.active);
+      setF(r, F.lap.dist, s.dist * 100);
+      if (s.active) {
+        setF(r, F.lap.cycles, s.strokes);
+        setF(r, F.lap.speed, s.dist / s.timer * 1000); setF(r, F.lap.eSpeed, s.dist / s.timer * 1000);
+      }
+      li++;
+    } else if (r.def.gnum === MSG.SESSION && (poolChanged || sums.some((s, k) => !same(s, before[k])))) {
+      const act = lengths.filter(l => l.active), dist = act.length * pool, t = act.reduce((s, l) => s + l.timer, 0);
+      setF(r, F.ses.dist, dist * 100); setF(r, F.ses.numLen, act.length); setF(r, F.ses.numActive, act.length);
+      setF(r, F.ses.pool, pool * 100);
+      setF(r, F.ses.cycles, act.reduce((s, l) => s + l.strokes, 0));
+      if (t > 0) { setF(r, F.ses.speed, dist / t * 1000); setF(r, F.ses.eSpeed, dist / t * 1000); }
+    }
+  }
+  const bodyLen = out.reduce((s, r) => s + r.bytes.length, 0);
+  const header = fit.header.slice(), hs = header.length;
+  const res = new Uint8Array(hs + bodyLen + 2), dv = new DataView(res.buffer);
+  res.set(header, 0);
+  dv.setUint32(4, bodyLen, true);
+  if (hs >= 14) dv.setUint16(12, crc16(res.subarray(0, 12)), true);
+  let p = hs;
+  for (const r of out) { res.set(r.bytes, p); p += r.bytes.length; }
+  dv.setUint16(p, crc16(res.subarray(0, p)), true);
+  return res;
+}
+
+async function readFile(buf) {
+  let u8 = new Uint8Array(buf);
+  if (u8[0] === 0x1F && u8[1] === 0x8B) {
+    const s = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'));
+    u8 = new Uint8Array(await new Response(s).arrayBuffer());
+  }
+  return u8;
+}
+</script>
+
+<script>
+// ---------- Oberfläche ----------
+const $ = id => document.getElementById(id);
+let fit, model, lengths, original, history = [], fileName = 'aktivitaet', openLaps = new Set();
+const STROKES = { 0: 'Kraul', 1: 'Rücken', 2: 'Brust', 3: 'Delfin', 4: 'Lagen', 5: 'Mixed', 6: 'IM', 7: 'IM' };
+
+const fmt = s => { const m = Math.floor(s / 60), r = s - m * 60; return `${m}:${r.toFixed(1).padStart(4, '0')}`; };
+const pace = (t, d) => d ? fmt(t / d * 100).replace(/\.\d$/, '') : '–';
+
+async function load(bytes, name) {
+  $('err').textContent = '';
+  try {
+    fit = parseFit(await readFile(bytes));
+    model = buildModel(fit);
+    lengths = original = model.lengths;
+    history = []; openLaps = new Set();
+    $('pool').value = model.pool;
+    fileName = name.replace(/\.gz$/i, '').replace(/\.fit$/i, '').replace(/[^\w.-]+/g, '_');
+    $('src').textContent = `Geladen: ${name}`;
+    render();
+  } catch (x) {
+    $('err').textContent = 'Fehler: ' + x.message;
+    $('laps').innerHTML = '';
+  }
+}
+
+$('file').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (f) load(await f.arrayBuffer(), f.name);
+});
+
+function apply(next) { if (next !== lengths) { history.push(lengths); lengths = next; render(); } }
+function undo() { if (history.length) { lengths = history.pop(); render(); } }
+$('undo').onclick = undo;
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && e.target.tagName !== 'INPUT') { e.preventDefault(); undo(); }
+});
+$('reset').onclick = () => apply(original);
+$('all').onclick = () => apply(applyAllSuggestions(lengths));
+$('pool').onchange = () => render();
+const output = () => writeFit(fit, model, lengths, +$('pool').value);
+$('save').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([output()], { type: 'application/octet-stream' }));
+  a.download = fileName + '_korrigiert.fit';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+function render() {
+  const pool = +$('pool').value || model.pool;
+  const m = { ...model, pool };
+  const now = lapSummary(m, lengths), before = lapSummary(m, original);
+  const sug = suggestions(lengths);
+  const total = lengths.filter(l => l.active).length * pool, totalBefore = original.filter(l => l.active).length * pool;
+  $('total').textContent = `Total ${total} m` + (total !== totalBefore ? ` (vorher ${totalBefore} m)` : '');
+  $('undo').disabled = !history.length;
+  $('reset').disabled = lengths === original;
+  $('all').disabled = !sug.size;
+  $('all').textContent = sug.size ? `Alle ${sug.size} Vorschläge übernehmen` : 'Keine Vorschläge';
+  $('save').disabled = false;
+
+  const root = $('laps');
+  root.innerHTML = '';
+  now.forEach((s, li) => {
+    if (!s.n) {
+      const d = document.createElement('div');
+      d.className = 'lap rest';
+      d.textContent = `Runde ${li + 1}: Pause`;
+      root.append(d);
+      return;
+    }
+    const idx = lengths.map((l, i) => [l, i]).filter(([l]) => l.lap === li);
+    const nSug = idx.filter(([, i]) => sug.has(i)).length;
+    const changed = s.dist !== before[li].dist;
+    const box = document.createElement('section');
+    box.className = 'lap' + (openLaps.has(li) || nSug ? '' : ' closed');
+    box.innerHTML = `<header><b>Runde ${li + 1}</b><span class="dist">${s.dist} m</span>
+      ${changed ? `<span class="changed">vorher ${before[li].dist} m</span>` : ''}
+      <span>${s.active} Bahnen</span><span>${fmt(s.timer)}</span><span>Ø ${pace(s.timer, s.dist)}/100 m</span>
+      ${nSug ? `<span>⚠ ${nSug} Vorschl${nSug > 1 ? 'äge' : 'ag'}</span>` : ''}</header>
+      <div class="scroll"><table><thead><tr><th>#</th><th>Zeit</th><th>Züge</th><th>Pace/100 m</th><th>Lage</th><th class="act">Vorschlag</th><th></th></tr></thead><tbody></tbody></table></div>`;
+    box.querySelector('header').onclick = () => {
+      box.classList.toggle('closed');
+      box.classList.contains('closed') ? openLaps.delete(li) : openLaps.add(li);
+    };
+    const tb = box.querySelector('tbody');
+    idx.forEach(([l, i], k) => {
+      const tr = document.createElement('tr');
+      const sg = sug.get(i);
+      if (!l.active) tr.className = 'pause';
+      else if (sg) tr.className = 'sus';
+      tr.innerHTML = `<td>${k + 1}</td><td>${fmt(l.timer)}</td><td>${l.active ? l.strokes : '–'}</td>
+        <td>${l.active ? pace(l.timer, pool) : 'Pause'}</td><td style="text-align:left">${l.active ? (STROKES[l.stroke] ?? '–') : ''}</td>
+        <td class="act sug"></td><td class="act"></td>`;
+      const btn = (td, t, title, fn, dis, cls) => {
+        const b = document.createElement('button'); b.textContent = t; b.title = title; b.disabled = !!dis; if (cls) b.className = cls;
+        b.onclick = () => { openLaps.add(li); apply(fn()); }; td.append(b, ' ');
+      };
+      if (sg) { tr.cells[5].append(sg.text + ' '); btn(tr.cells[5], 'Übernehmen', 'Vorschlag übernehmen', () => sg.apply(lengths), false, 'primary'); }
+      btn(tr.cells[6], 'Teilen', 'Bahn in zwei Bahnen aufteilen', () => splitLength(lengths, i), !l.active);
+      btn(tr.cells[6], '+ nächste', 'Mit der nächsten Bahn zusammenlegen', () => mergeWithNext(lengths, i), !idx[k + 1]);
+      btn(tr.cells[6], 'Löschen', 'Bahn entfernen', () => deleteLength(lengths, i));
+      tb.append(tr);
+    });
+    root.append(box);
+  });
+}
+</script>
+</body>
+</html>

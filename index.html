@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de-CH">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -46,22 +46,23 @@
 <body>
 <main>
   <h1>FIT Swim Editor</h1>
-  <p class="lead">Bahnen einer Schwimmaktivität im Becken korrigieren. Alles läuft lokal im Browser, die Datei verlässt den Rechner nicht.</p>
+  <p class="lead" data-i18n="lead">Bahnen einer Schwimmaktivität im Becken korrigieren. Alles läuft lokal im Browser, die Datei verlässt den Rechner nicht.</p>
 
   <div class="bar">
-    <input type="file" id="file" accept=".fit,.gz,.FIT">
-    <label>Becken <input type="number" id="pool" min="10" max="100" step="0.5" value="25"> m</label>
-    <button id="undo" disabled title="Ctrl+Z">↶ Rückgängig</button>
-    <button id="reset" disabled>Zurücksetzen</button>
-    <button id="all" disabled>Alle Vorschläge übernehmen</button>
-    <button id="save" class="primary" disabled>Korrigierte FIT speichern</button>
+    <input type="file" id="file" accept=".fit,.gz,.FIT" hidden>
+    <button id="choose-file" data-i18n="chooseFile">FIT-Datei auswählen</button>
+    <label><span data-i18n="pool">Becken</span> <input type="number" id="pool" min="10" max="100" step="0.5" value="25"> m</label>
+    <button id="undo" disabled title="Ctrl+Z" data-i18n="undo">↶ Rückgängig</button>
+    <button id="reset" disabled data-i18n="reset">Zurücksetzen</button>
+    <button id="all" disabled data-i18n="applyAll">Alle Vorschläge übernehmen</button>
+    <button id="save" class="primary" disabled data-i18n="save">Korrigierte FIT speichern</button>
     <span class="total" id="total"></span>
   </div>
   <div id="src" class="muted"></div>
   <div id="err"></div>
   <div id="laps"></div>
 
-  <p class="hint">
+  <p class="hint" data-i18n="hint">
     Gelb markiert: Bahnen, die deutlich länger (vermutlich mehrere Bahnen) oder deutlich kürzer (vermutlich Phantom-Bahn) sind als der Median.
     In der Spalte «Vorschlag» steht, wie sich die Bahn korrigieren lässt. Manuell: «Teilen» macht aus einer Bahn zwei, «+ nächste» legt sie mit der folgenden zusammen.
     Runden- und Sessiondistanz, Anzahl Bahnen, Züge und Pace werden beim Speichern neu berechnet. Zeiten, Herzfrequenz und alle übrigen Daten bleiben unverändert.
@@ -69,8 +70,73 @@
   </p>
 </main>
 
+<script id="i18n">
+// Use the first supported language in the browser's preference list.
+function detectLanguage(languages = navigator.languages, fallback = navigator.language) {
+  for (const locale of [...(languages || []), fallback]) {
+    const base = String(locale || '').toLowerCase().split('-')[0];
+    if (base === 'de' || base === 'en') return base;
+  }
+  return 'en';
+}
+const language = detectLanguage();
+const translations = {
+  de: {
+    lead: 'Bahnen einer Schwimmaktivität im Becken korrigieren. Alles läuft lokal im Browser, die Datei verlässt den Rechner nicht.',
+    pool: 'Becken', undo: '↶ Rückgängig', reset: 'Zurücksetzen',
+    applyAll: 'Alle Vorschläge übernehmen', save: 'Korrigierte FIT speichern',
+    hint: 'Gelb markiert: Bahnen, die deutlich länger (vermutlich mehrere Bahnen) oder deutlich kürzer (vermutlich Phantom-Bahn) sind als der Median. In der Spalte «Vorschlag» steht, wie sich die Bahn korrigieren lässt. Manuell: «Teilen» macht aus einer Bahn zwei, «+ nächste» legt sie mit der folgenden zusammen. Runden- und Sessiondistanz, Anzahl Bahnen, Züge und Pace werden beim Speichern neu berechnet. Zeiten, Herzfrequenz und alle übrigen Daten bleiben unverändert. Ablauf: Originaldatei (.fit) aus der Trainingsplattform herunterladen, hier korrigieren und speichern, danach wieder hochladen. Bei TrainingPeaks zuerst die Originaldatei löschen und erst dann die korrigierte hochladen (sonst werden beide zusammengeführt).',
+    chooseFile: 'FIT-Datei auswählen', loaded: 'Geladen: {name}', error: 'Fehler: {message}',
+    invalidFit: 'Keine gültige FIT-Datei.', missingDefinition: 'Datensatz ohne Definition bei Byte {position}',
+    noLengths: 'Keine Bahnen gefunden. Ist das eine Beckenschwimm-Aktivität?',
+    splitSuggestion: 'in {count} Bahnen teilen', mergePrevious: 'mit vorheriger zusammenlegen',
+    mergeNext: 'mit nächster zusammenlegen', deleteSuggestion: 'löschen (Phantom-Bahn)',
+    total: 'Total {distance} m', previous: 'vorher {distance} m',
+    applyCount: 'Alle {count} Vorschläge übernehmen', noSuggestions: 'Keine Vorschläge',
+    lap: 'Runde {number}', rest: 'Pause', lengths: '{count} Bahnen',
+    suggestionOne: '{count} Vorschlag', suggestionMany: '{count} Vorschläge',
+    time: 'Zeit', strokes: 'Züge', pace: 'Pace/100 m', stroke: 'Lage', suggestion: 'Vorschlag',
+    apply: 'Übernehmen', applyTitle: 'Vorschlag übernehmen',
+    split: 'Teilen', splitTitle: 'Bahn in zwei Bahnen aufteilen',
+    next: '+ nächste', nextTitle: 'Mit der nächsten Bahn zusammenlegen',
+    delete: 'Löschen', deleteTitle: 'Bahn entfernen', correctedSuffix: '_korrigiert',
+    freestyle: 'Kraul', backstroke: 'Rücken', breaststroke: 'Brust', butterfly: 'Delfin', medley: 'Lagen', mixed: 'Mixed',
+  },
+  en: {
+    lead: 'Correct lengths in a pool swimming activity. Everything runs locally in your browser; your file stays on your computer.',
+    pool: 'Pool', undo: '↶ Undo', reset: 'Reset',
+    applyAll: 'Apply all suggestions', save: 'Save corrected FIT',
+    hint: 'Yellow highlights mark lengths that are much longer (probably multiple lengths) or much shorter (probably a phantom length) than the median. The “Suggestion” column shows how to correct each length. Manual controls: “Split” turns one length into two; “+ next” merges it with the following length. Lap and session distances, length counts, strokes and pace are recalculated when saving. Times, heart rate and all other data stay unchanged. Workflow: download the original file (.fit) from your training platform, correct and save it here, then upload it again. In TrainingPeaks, delete the original file before uploading the corrected one (otherwise the two will be merged).',
+    chooseFile: 'Choose FIT file', loaded: 'Loaded: {name}', error: 'Error: {message}',
+    invalidFit: 'Not a valid FIT file.', missingDefinition: 'Record without a definition at byte {position}',
+    noLengths: 'No lengths found. Is this a pool swimming activity?',
+    splitSuggestion: 'split into {count} lengths', mergePrevious: 'merge with previous length',
+    mergeNext: 'merge with next length', deleteSuggestion: 'delete (phantom length)',
+    total: 'Total {distance} m', previous: 'previously {distance} m',
+    applyCount: 'Apply all {count} suggestions', noSuggestions: 'No suggestions',
+    lap: 'Lap {number}', rest: 'Rest', lengths: '{count} lengths',
+    suggestionOne: '{count} suggestion', suggestionMany: '{count} suggestions',
+    time: 'Time', strokes: 'Strokes', pace: 'Pace/100 m', stroke: 'Stroke', suggestion: 'Suggestion',
+    apply: 'Apply', applyTitle: 'Apply suggestion',
+    split: 'Split', splitTitle: 'Split this length into two',
+    next: '+ next', nextTitle: 'Merge with the next length',
+    delete: 'Delete', deleteTitle: 'Remove length', correctedSuffix: '_corrected',
+    freestyle: 'Freestyle', backstroke: 'Backstroke', breaststroke: 'Breaststroke', butterfly: 'Butterfly', medley: 'Medley', mixed: 'Mixed',
+  },
+};
+function t(key, values = {}) {
+  return translations[language][key].replace(/\{(\w+)\}/g, (_, name) => values[name]);
+}
+document.documentElement.lang = language;
+document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+document.getElementById('file').setAttribute('aria-label', t('chooseFile'));
+</script>
+
 <script id="core">
 // ---------- FIT-Kern (ohne DOM) ----------
+class FitError extends Error {
+  constructor(code, values = {}) { super(code); this.code = code; this.values = values; }
+}
 const MSG = { SESSION: 18, LAP: 19, LENGTH: 101 };
 const F = {
   ts: 253, idx: 254,
@@ -91,7 +157,7 @@ function crc16(bytes, crc = 0) {
 function parseFit(u8) {
   const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
   const hs = u8[0];
-  if (String.fromCharCode(...u8.slice(8, 12)) !== '.FIT') throw new Error('Keine gültige FIT-Datei.');
+  if (String.fromCharCode(...u8.slice(8, 12)) !== '.FIT') throw new FitError('invalidFit');
   const end = hs + dv.getUint32(4, true);
   const defs = {}, recs = [];
   let p = hs;
@@ -108,7 +174,7 @@ function parseFit(u8) {
       recs.push({ def: null, bytes: u8.slice(start, p) });
     } else {
       const def = defs[h & 0x80 ? (h >> 5) & 3 : h & 0x0F];
-      if (!def) throw new Error('Datensatz ohne Definition bei Byte ' + start);
+      if (!def) throw new FitError('missingDefinition', { position: start });
       p += def.size;
       recs.push({ def, bytes: u8.slice(start, p) });
     }
@@ -145,7 +211,7 @@ function setF(rec, num, v) {
 function buildModel(fit) {
   const recs = fit.recs, of = g => recs.filter(r => r.def && r.def.gnum === g);
   const lenRecs = of(MSG.LENGTH), laps = of(MSG.LAP), session = of(MSG.SESSION)[0];
-  if (!lenRecs.length) throw new Error('Keine Bahnen gefunden. Ist das eine Beckenschwimm-Aktivität?');
+  if (!lenRecs.length) throw new FitError('noLengths');
   const byIdx = new Map(lenRecs.map((r, i) => [getF(r, F.idx) ?? i, r]));
   const lapOf = new Map(), lapFirst = [];
   laps.forEach((lap, li) => {
@@ -198,7 +264,7 @@ function suggestions(lengths) {
     if (!l.active) return;
     const n = Math.round(l.timer / medT);
     if (n >= 2 && l.timer > medT * 1.6) {
-      out.set(i, { text: `in ${n} Bahnen teilen`, apply: ls => splitLength(ls, i, n) });
+      out.set(i, { key: 'splitSuggestion', values: { count: n }, apply: ls => splitLength(ls, i, n) });
       return;
     }
     if (medS && l.strokes < medS * 0.5 && l.timer < medT * 0.8) {
@@ -208,9 +274,9 @@ function suggestions(lengths) {
         .sort((a, b) => Math.abs(lengths[a].timer + l.timer - medT) - Math.abs(lengths[b].timer + l.timer - medT));
       if (cand.length) {
         const k = cand[0];
-        out.set(i, { text: k < i ? 'mit vorheriger zusammenlegen' : 'mit nächster zusammenlegen',
+        out.set(i, { key: k < i ? 'mergePrevious' : 'mergeNext',
                      apply: ls => mergeWithNext(ls, Math.min(i, k)) });
-      } else out.set(i, { text: 'löschen (Phantom-Bahn)', apply: ls => deleteLength(ls, i) });
+      } else out.set(i, { key: 'deleteSuggestion', apply: ls => deleteLength(ls, i) });
     }
   });
   return out;
@@ -309,8 +375,8 @@ async function readFile(buf) {
 <script>
 // ---------- Oberfläche ----------
 const $ = id => document.getElementById(id);
-let fit, model, lengths, original, history = [], fileName = 'aktivitaet', openLaps = new Set();
-const STROKES = { 0: 'Kraul', 1: 'Rücken', 2: 'Brust', 3: 'Delfin', 4: 'Lagen', 5: 'Mixed', 6: 'IM', 7: 'IM' };
+let fit, model, lengths, original, history = [], fileName = 'activity', openLaps = new Set();
+const STROKES = { 0: t('freestyle'), 1: t('backstroke'), 2: t('breaststroke'), 3: t('butterfly'), 4: t('medley'), 5: t('mixed'), 6: 'IM', 7: 'IM' };
 
 const fmt = s => { const m = Math.floor(s / 60), r = s - m * 60; return `${m}:${r.toFixed(1).padStart(4, '0')}`; };
 const pace = (t, d) => d ? fmt(t / d * 100).replace(/\.\d$/, '') : '–';
@@ -324,14 +390,15 @@ async function load(bytes, name) {
     history = []; openLaps = new Set();
     $('pool').value = model.pool;
     fileName = name.replace(/\.gz$/i, '').replace(/\.fit$/i, '').replace(/[^\w.-]+/g, '_');
-    $('src').textContent = `Geladen: ${name}`;
+    $('src').textContent = t('loaded', { name });
     render();
   } catch (x) {
-    $('err').textContent = 'Fehler: ' + x.message;
+    $('err').textContent = t('error', { message: x instanceof FitError ? t(x.code, x.values) : x.message });
     $('laps').innerHTML = '';
   }
 }
 
+$('choose-file').onclick = () => $('file').click();
 $('file').addEventListener('change', async e => {
   const f = e.target.files[0];
   if (f) load(await f.arrayBuffer(), f.name);
@@ -350,7 +417,7 @@ const output = () => writeFit(fit, model, lengths, +$('pool').value);
 $('save').onclick = () => {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([output()], { type: 'application/octet-stream' }));
-  a.download = fileName + '_korrigiert.fit';
+  a.download = fileName + t('correctedSuffix') + '.fit';
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
@@ -361,11 +428,11 @@ function render() {
   const now = lapSummary(m, lengths), before = lapSummary(m, original);
   const sug = suggestions(lengths);
   const total = lengths.filter(l => l.active).length * pool, totalBefore = original.filter(l => l.active).length * pool;
-  $('total').textContent = `Total ${total} m` + (total !== totalBefore ? ` (vorher ${totalBefore} m)` : '');
+  $('total').textContent = t('total', { distance: total }) + (total !== totalBefore ? ` (${t('previous', { distance: totalBefore })})` : '');
   $('undo').disabled = !history.length;
   $('reset').disabled = lengths === original;
   $('all').disabled = !sug.size;
-  $('all').textContent = sug.size ? `Alle ${sug.size} Vorschläge übernehmen` : 'Keine Vorschläge';
+  $('all').textContent = sug.size ? t('applyCount', { count: sug.size }) : t('noSuggestions');
   $('save').disabled = false;
 
   const root = $('laps');
@@ -374,7 +441,7 @@ function render() {
     if (!s.n) {
       const d = document.createElement('div');
       d.className = 'lap rest';
-      d.textContent = `Runde ${li + 1}: Pause`;
+      d.textContent = `${t('lap', { number: li + 1 })}: ${t('rest')}`;
       root.append(d);
       return;
     }
@@ -383,11 +450,11 @@ function render() {
     const changed = s.dist !== before[li].dist;
     const box = document.createElement('section');
     box.className = 'lap' + (openLaps.has(li) || nSug ? '' : ' closed');
-    box.innerHTML = `<header><b>Runde ${li + 1}</b><span class="dist">${s.dist} m</span>
-      ${changed ? `<span class="changed">vorher ${before[li].dist} m</span>` : ''}
-      <span>${s.active} Bahnen</span><span>${fmt(s.timer)}</span><span>Ø ${pace(s.timer, s.dist)}/100 m</span>
-      ${nSug ? `<span>⚠ ${nSug} Vorschl${nSug > 1 ? 'äge' : 'ag'}</span>` : ''}</header>
-      <div class="scroll"><table><thead><tr><th>#</th><th>Zeit</th><th>Züge</th><th>Pace/100 m</th><th>Lage</th><th class="act">Vorschlag</th><th></th></tr></thead><tbody></tbody></table></div>`;
+    box.innerHTML = `<header><b>${t('lap', { number: li + 1 })}</b><span class="dist">${s.dist} m</span>
+      ${changed ? `<span class="changed">${t('previous', { distance: before[li].dist })}</span>` : ''}
+      <span>${t('lengths', { count: s.active })}</span><span>${fmt(s.timer)}</span><span>Ø ${pace(s.timer, s.dist)}/100 m</span>
+      ${nSug ? `<span>⚠ ${t(nSug === 1 ? 'suggestionOne' : 'suggestionMany', { count: nSug })}</span>` : ''}</header>
+      <div class="scroll"><table><thead><tr><th>#</th><th>${t('time')}</th><th>${t('strokes')}</th><th>${t('pace')}</th><th>${t('stroke')}</th><th class="act">${t('suggestion')}</th><th></th></tr></thead><tbody></tbody></table></div>`;
     box.querySelector('header').onclick = () => {
       box.classList.toggle('closed');
       box.classList.contains('closed') ? openLaps.delete(li) : openLaps.add(li);
@@ -399,16 +466,16 @@ function render() {
       if (!l.active) tr.className = 'pause';
       else if (sg) tr.className = 'sus';
       tr.innerHTML = `<td>${k + 1}</td><td>${fmt(l.timer)}</td><td>${l.active ? l.strokes : '–'}</td>
-        <td>${l.active ? pace(l.timer, pool) : 'Pause'}</td><td style="text-align:left">${l.active ? (STROKES[l.stroke] ?? '–') : ''}</td>
+        <td>${l.active ? pace(l.timer, pool) : t('rest')}</td><td style="text-align:left">${l.active ? (STROKES[l.stroke] ?? '–') : ''}</td>
         <td class="act sug"></td><td class="act"></td>`;
       const btn = (td, t, title, fn, dis, cls) => {
         const b = document.createElement('button'); b.textContent = t; b.title = title; b.disabled = !!dis; if (cls) b.className = cls;
         b.onclick = () => { openLaps.add(li); apply(fn()); }; td.append(b, ' ');
       };
-      if (sg) { tr.cells[5].append(sg.text + ' '); btn(tr.cells[5], 'Übernehmen', 'Vorschlag übernehmen', () => sg.apply(lengths), false, 'primary'); }
-      btn(tr.cells[6], 'Teilen', 'Bahn in zwei Bahnen aufteilen', () => splitLength(lengths, i), !l.active);
-      btn(tr.cells[6], '+ nächste', 'Mit der nächsten Bahn zusammenlegen', () => mergeWithNext(lengths, i), !idx[k + 1]);
-      btn(tr.cells[6], 'Löschen', 'Bahn entfernen', () => deleteLength(lengths, i));
+      if (sg) { tr.cells[5].append(t(sg.key, sg.values) + ' '); btn(tr.cells[5], t('apply'), t('applyTitle'), () => sg.apply(lengths), false, 'primary'); }
+      btn(tr.cells[6], t('split'), t('splitTitle'), () => splitLength(lengths, i), !l.active);
+      btn(tr.cells[6], t('next'), t('nextTitle'), () => mergeWithNext(lengths, i), !idx[k + 1]);
+      btn(tr.cells[6], t('delete'), t('deleteTitle'), () => deleteLength(lengths, i));
       tb.append(tr);
     });
     root.append(box);
